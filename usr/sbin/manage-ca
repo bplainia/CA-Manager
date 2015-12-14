@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# Licensed under MIT License. Use at your own risk.
+#
+# References:
+#  https://jamielinux.com/docs/openssl-certificate-authority/index.html
+
+
+help_main() {
+    echo "CA Key Manager 1.0 Help"
+	echo "Usage: $0 [-t|-d|-h] <COMMAND>"
+	echo "COMMAND: list, new, config, help"
+}
+
+generate_config() {
+# TODO: Finish openssl.cnf generation (with option to create the main CA or an intermediate CA)
+cat <<EOF
+[ ca ]
+default_ca	= CA_default		# The default ca section
+####################################################################
+[ CA_default ]
+dir		        = $directory/$target
+certs		      = $dir/certs
+crl_dir		    = $dir/crl
+database	    = $dir/index.txt
+new_certs_dir	= $dir/newcerts
+certificate	  = $dir/certs/$target.cert.pem 
+serial		    = $dir/serial 	
+crlnumber	    = $dir/crlnumber
+crl		        = $dir/$target.crl.pem
+private_key	  = $dir/private/$target.key.pem# The private key
+RANDFILE	    = $dir/private/.rand
+# THERE IS MUCH MORE THAN THIS
+EOF
+}
+
+mkca() {
+  # TODO: Alternate directory to store items in. Configure in config file or override with switch.
+  # Make the directories that are needed
+  # TODO: Test to see if the target is already there. If so, error. Ask for user to delete on their own after checking.
+  mkdir $directory/$target
+  cd $directory/$target
+  mkdir certs crl newcerts private
+  chmod 700 private
+  touch index.txt
+  echo 1000 > serial
+  # Generate the config file
+  generate_config # uses directory, target, and type variables
+  # Generate the private key
+  echo Generating CA Private Key
+  echo Enter a CA password when prompted
+  openssl genrsa -aes256 -out private/$1.key.pem 4096
+  chmod 400 private/$1.key.pem
+  # Now create the public key
+  echo Generating CA Certificate
+  openssl req -config openssl.cnf -key private/$1.key.pem -new -x509 -days 3650 -sha512 -extensions v3_ca -out certs/$1.cert.pem
+
+  verify=`openssl x509 -noout -text -in certs/$1.cert.pem`
+  echo Please check the certificate
+  echo $verify
+  # TODO: Verify the certificate is correct automatically
+  echo
+  echo "Is it OK? [Y/n]"
+  read check
+  if [ !( $check == "y" || $check == "Y" || $check == "" ) ] 
+  then
+    exit 3
+  fi
+}
+
+# before we read the switches, we need to read the config file, if it exists.
+readconfig() {
+
+}
+
+help_config() {
+ echo "CA Key Manager 1.0 Help"
+ echo "The Config command:"
+}
+
+
+# Read the switches
+while [ $# -gt 0 ]; do
+  case "$1" in
+   -t|--type)
+      shift
+		  if [ -z "$(echo $1 |grep ^-.)" ]; then
+		    type="$1"
+			shift
+		  fi
+	 -d|--directory)
+	   shift
+	   if [ -z "$(echo $1 |grep ^-.)" ]; then
+		    directory="$1"
+		    shift
+		 fi
+	 -h|--help)
+     help_main
+     exit 0 ;;
+   -*)    
+     echo "${0}: ${1}: invalid option" >&2
+     help_main >&2
+		 exit 2 ;;
+    *)    break ;; 
+  esac
+done
+# end of the switches. now for commands
+cmd=$1
+shift
+target=$1
+shift
