@@ -5,107 +5,272 @@
 # References:
 #  https://jamielinux.com/docs/openssl-certificate-authority/index.html
 
+# Setup
+shopt -s nocasematch
+version="0.1"
+
+############################################################
+# Help Functions                                           #
+############################################################
 
 help_main() {
-    echo "CA Key Manager 1.0 Help"
+	echo ""
 	echo "Usage: $0 [-t|-d|-h] <COMMAND>"
-	echo "COMMAND: list, new, config, help"
+	echo "	COMMAND: list, new, config, help, sign, export, import"
+	echo "	Use help <COMMAND> to find help"
 }
+
+help_funct() {
+	echo "CA Key Manager $version Help"
+	if `type help_funct_$1 &> /dev/null`; then
+		help_funct_$1
+	elif [[ $1 == "" ]]; then
+		help_main
+	elif [[ $1 == "-h" || $1 == "--help" ]]; then
+		help_funct_help
+	else
+		echo "Command not found. Either help has not been written for that command or it doesn't exist"
+	fi
+}
+
+help_funct_help() {
+	echo "Help for when you need help:"
+	echo "Well, there really isn't any help for you if you need to find out how to use the help function"
+	echo "Just put a command name after help to figure out what it does."
+}
+
+help_funct_list() {
+	echo "The List Command:"
+}
+help_funct_config() {
+	echo "The Config Command:"
+}
+
+############################################################
+# Config                                                   #
+############################################################
 
 generate_config() {
 # TODO: Finish openssl.cnf generation (with option to create the main CA or an intermediate CA)
-cat <<EOF
-[ ca ]
-default_ca	= CA_default		# The default ca section
-####################################################################
-[ CA_default ]
-dir		        = $directory/$target
-certs		      = $dir/certs
-crl_dir		    = $dir/crl
-database	    = $dir/index.txt
-new_certs_dir	= $dir/newcerts
-certificate	  = $dir/certs/$target.cert.pem 
-serial		    = $dir/serial 	
-crlnumber	    = $dir/crlnumber
-crl		        = $dir/$target.crl.pem
-private_key	  = $dir/private/$target.key.pem# The private key
-RANDFILE	    = $dir/private/.rand
-# THERE IS MUCH MORE THAN THIS
-EOF
-}
-
-mkca() {
-  # TODO: Alternate directory to store items in. Configure in config file or override with switch.
-  # Make the directories that are needed
-  # TODO: Test to see if the target is already there. If so, error. Ask for user to delete on their own after checking.
-  mkdir $directory/$target
-  cd $directory/$target
-  mkdir certs crl newcerts private
-  chmod 700 private
-  touch index.txt
-  echo 1000 > serial
-  # Generate the config file
-  generate_config # uses directory, target, and type variables
-  # Generate the private key
-  echo Generating CA Private Key
-  echo Enter a CA password when prompted
-  openssl genrsa -aes256 -out private/$1.key.pem 4096
-  chmod 400 private/$1.key.pem
-  # Now create the public key
-  echo Generating CA Certificate
-  openssl req -config openssl.cnf -key private/$1.key.pem -new -x509 -days 3650 -sha512 -extensions v3_ca -out certs/$1.cert.pem
-
-  verify=`openssl x509 -noout -text -in certs/$1.cert.pem`
-  echo Please check the certificate
-  echo $verify
-  # TODO: Verify the certificate is correct automatically
-  echo
-  echo "Is it OK? [Y/n]"
-  read check
-  if [ !( $check == "y" || $check == "Y" || $check == "" ) ] 
-  then
-    exit 3
-  fi
+if [[ $1 == "root" ]]; then
+	policy="policy_strict"
+else
+	policy="policy_loose"
+fi
+cat <<-EOFILE
+	[ ca ]
+	default_ca	= CA_default		# The default ca section
+	
+	[ CA_default ]
+	dir	              = $directory/$target
+	certs	          = \$dir/certs
+	crl_dir	          = \$dir/crl
+	database          = \$dir/index.txt
+	new_certs_dir     = \$dir/newcerts
+	certificate	      = \$dir/certs/$target.cert.pem 
+	serial		      = \$dir/serial 	
+	private_key	      = \$dir/private/$target.key.pem# The private key
+	RANDFILE	      = \$dir/private/.rand
+	
+	# Certificat Revocation Lists
+	crl_extensions    = crl_ext
+	crlnumber	      = \$dir/crlnumber
+	crl		          = \$dir/$target.crl.pem
+	default_crl_days  = 30
+	
+	# Encoding
+	default_md        = sha512
+	
+	name_opt          = ca_default
+	cert_opt          = ca_default
+	default_days      = 375
+	preserve          = no
+	policy            = $policy
+	
+	[ policy_strict ]
+	# For root CA
+	countryName            = match
+	stateOrProvinceName    = match
+	organizationName       = match
+	organizationalUnitName = optional
+	commonName             = supplied
+	emailAddress           = optional
+	
+	[ policy_loose ]
+	# For intermediate CA's
+	countryName            = optional
+	stateOrProvinceName    = optional
+	localityName           = optional
+	organizationName       = optional
+	organizationalUnitName = optional
+	commonName             = supplied
+	emailAddress           = optional
+	
+	[ req ]
+	# Options for the req tool
+	default_bits           = 2048
+	distinguished_name     = req_distinguished_name
+	string_mask            = utf8only
+	default_md             = sha512
+	x509_extensions        = v3_ca
+	
+	[ req_distinguished_name ]
+	countryName                     = Country Name (2 letter code)
+	stateOrProvinceName             = State or Province Name
+	localityName                    = Locality Name
+	0.organizationName              = Organization Name
+	organizationalUnitName          = Organizational Unit Name
+	commonName                      = Common Name
+	emailAddress                    = Email Address (Leave Empty)
+	
+	# Defaults
+	countryName_default             = US
+	stateOrProvinceName_default     = Florida
+	localityName_default            = Pensacola
+	0.organizationName_default      = $companyName
+	
+	[ v3_ca ]
+	# Extensions for the CA
+	subjectKeyIdentifier    = hash
+	authorityKeyIdentifier  = keyid:always,issuer
+	basicConstraints        = critical, CA:true, pathlen:1
+	keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
+	
+	[ v3_intermediate_ca ]
+	subjectKeyIdentifier    = hash
+	authorityKeyIdentifier  = keyid:always,issuer
+	basicConstraints        = critical, CA:true, pathlen:0
+	keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
+	
+	[ usr_cert ]
+	# Extensions for client certificates (`man x509v3_config`).
+	basicConstraints = CA:FALSE
+	nsCertType = client, email
+	nsComment = "OpenSSL Generated Client Certificate"
+	subjectKeyIdentifier = hash
+	authorityKeyIdentifier = keyid,issuer
+	keyUsage = critical, nonRepudiation, digitalSignature, keyEncipherment
+	extendedKeyUsage = clientAuth, emailProtection
+	
+	[ server_cert ]
+	# Extensions for server certificates (`man x509v3_config`).
+	basicConstraints = CA:FALSE
+	nsCertType = server
+	nsComment = "OpenSSL Generated Server Certificate"
+	subjectKeyIdentifier = hash
+	authorityKeyIdentifier = keyid,issuer:always
+	keyUsage = critical, digitalSignature, keyEncipherment
+	extendedKeyUsage = serverAuth
+	
+	[ crl_ext ]
+	authorityKeyIdentifier = keyid:always
+	
+	[ ocsp ]
+	basicConstraints = CA:FALSE
+	subjectKeyIdentifier = hash
+	authorityKeyIdentifier = keyid,issuer
+	keyUsage = critical, digitalSignature
+	extendedKeyUsage = critical, OCSPSigning
+EOFILE
 }
 
 # before we read the switches, we need to read the config file, if it exists.
 readconfig() {
-
+	echo Reading Configuration File
+	
 }
 
-help_config() {
- echo "CA Key Manager 1.0 Help"
- echo "The Config command:"
+############################################################
+# Generate Certificates (New Command)                      #
+############################################################
+mkca() {
+	# TODO: Alternate directory to store items in. Configure in config file or override with switch.
+	# Make the directories that are needed
+	# TODO: Test to see if the target is already there. If so, error. Ask for user to delete on their own after checking.
+	mkdir $directory/$target
+	cd $directory/$target
+	mkdir certs crl newcerts private
+	chmod 700 private
+	touch index.txt
+	echo 1000 > serial
+	# Generate the config file
+	generate_config # uses directory, target, and type variables
+	# Generate the private key
+	echo Generating CA Private Key
+	echo Enter a CA password when prompted
+	openssl genrsa -aes256 -out private/$1.key.pem 4096
+	chmod 400 private/$1.key.pem
+	# Now create the public key
+	echo Generating CA Certificate
+	openssl req -config openssl.cnf -key private/$1.key.pem -new -x509 -days 3650 -sha512 -extensions v3_ca -out certs/$1.cert.pem
+	verify=`openssl x509 -noout -text -in certs/$1.cert.pem`
+	echo Please check the certificate
+	echo $verify
+	# TODO: Verify the certificate is correct automatically
+	echo
+	echo "Is it OK? [Y/n]"
+	read check
+	if [ !( $check == "y" || $check == "Y" || $check == "" ) ] 
+	then
+		exit 3
+	fi
 }
 
+############################################################
+# Main Program                                             #
+############################################################
 
 # Read the switches
 while [ $# -gt 0 ]; do
-  case "$1" in
-   -t|--type)
-      shift
-		  if [ -z "$(echo $1 |grep ^-.)" ]; then
-		    type="$1"
+	case "$1" in
+		-t|--type)
 			shift
-		  fi
-	 -d|--directory)
-	   shift
-	   if [ -z "$(echo $1 |grep ^-.)" ]; then
-		    directory="$1"
-		    shift
-		 fi
-	 -h|--help)
-     help_main
-     exit 0 ;;
-   -*)    
-     echo "${0}: ${1}: invalid option" >&2
-     help_main >&2
-		 exit 2 ;;
-    *)    break ;; 
-  esac
+			if [ -z "$(echo $1 |grep ^-.)" ]; then
+			type="$1"
+			shift
+			fi ;;
+		-d|--directory)
+			shift
+			if [ -z "$(echo $1 |grep ^-.)" ]; then
+			directory="$1"
+			shift
+			fi ;;
+		-h|--help)
+			shift
+			help_funct $1
+			exit 0 ;;
+		-*)    
+			echo "${0}: ${1}: invalid option" >&2
+			help_main >&2
+			exit 2 ;;
+		*)    break ;; 
+	esac
 done
 # end of the switches. now for commands
-cmd=$1
-shift
-target=$1
-shift
+case "$1" in
+	list|l)
+		echo "Cannot list certificates or CA's" ;;
+	new|n)
+		shift
+		# TODO: New ca, user, or server
+		echo "Cannot make new certificates yet" ;;
+	config|c)
+		echo "Cannot configure. I don't know how" ;;
+	help|h)
+		shift
+		help_funct $1 ;;
+	sign|s)
+		echo "Sign not implemented" ;;
+	export|e|exp)
+		echo "Export not implemented" ;;
+	import|i|imp)
+		echo "Import certificate not implemented" ;;
+	*)
+		if [[ $1 == "" ]]; then
+			echo "No command given. Try the help command"
+		else
+			echo "Command not found."
+		fi
+esac
+exit 0
+# End of the Script
