@@ -5,9 +5,30 @@
 # References:
 #  https://jamielinux.com/docs/openssl-certificate-authority/index.html
 
-# Setup
+############################################################
+# Setup                                                    #
+############################################################
 shopt -s nocasematch
 version="0.1"
+configfile="/etc/ca-manager/ca-manager.conf"
+
+interrupt_c() {
+	echo CTRL-C Pressed!!
+}
+
+interrupt_other() {
+	another interrupt was done. Exiting.
+	exit
+}
+
+exit_cmd() {
+	echo Finished.
+	exit
+}
+
+trap exit_cmd EXIT
+trap interrupt_c SIGINT
+trap interrupt_other SIGHUP SIGTERM
 
 ############################################################
 # Help Functions                                           #
@@ -15,7 +36,7 @@ version="0.1"
 
 help_main() {
 	echo ""
-	echo "Usage: $0 [-t|-d|-h] <COMMAND>"
+	echo "Usage: $0 [options] <COMMAND>"
 	echo "	COMMAND: list, new, config, help, sign, export, import"
 	echo "	Use help <COMMAND> to find help"
 }
@@ -50,7 +71,7 @@ help_funct_config() {
 # Config                                                   #
 ############################################################
 
-generate_config() {
+generate_ssl_config() {
 # TODO: Finish openssl.cnf generation (with option to create the main CA or an intermediate CA)
 if [[ $1 == "root" ]]; then
 	policy="policy_strict"
@@ -174,10 +195,25 @@ cat <<-EOFILE
 EOFILE
 }
 
+modify_ssl_config() {
+	echo Changing ssl config
+	
+}
+
 # before we read the switches, we need to read the config file, if it exists.
-readconfig() {
+read_my_config() {
 	echo Reading Configuration File
 	
+}
+
+write_my_config() {
+	echo Reading Configuration File
+	
+}
+
+config_my_config() {
+	echo You are now configuring the settings for this
+	# two modes: interactive and set a setting. First time run, will want to run it interactively.
 }
 
 ############################################################
@@ -197,7 +233,7 @@ mkca() {
 	generate_config # uses directory, target, and type variables
 	# Generate the private key
 	echo Generating CA Private Key
-	echo Enter a CA password when prompted
+	echo Enter a CA password when prompted. Remember it!
 	openssl genrsa -aes256 -out private/$1.key.pem 4096
 	chmod 400 private/$1.key.pem
 	# Now create the public key
@@ -210,7 +246,7 @@ mkca() {
 	echo
 	echo "Is it OK? [Y/n]"
 	read check
-	if [ !( $check == "y" || $check == "Y" || $check == "" ) ] 
+	if ! [[ $check == "y" || $check == "Y" || $check == "" ]]
 	then
 		exit 3
 	fi
@@ -220,7 +256,7 @@ mkca() {
 # Main Program                                             #
 ############################################################
 
-# Read the switches
+# Read the arguments until they are no longer switches
 while [ $# -gt 0 ]; do
 	case "$1" in
 		-t|--type)
@@ -230,14 +266,20 @@ while [ $# -gt 0 ]; do
 			shift
 			fi ;;
 		-d|--directory)
+			# Gives alternate directory than what is in config file
 			shift
 			if [ -z "$(echo $1 |grep ^-.)" ]; then
 			directory="$1"
 			shift
 			fi ;;
 		-h|--help)
+			# Equivilent of the help command. In fact, does the same if you double the switch.
 			shift
+			echo "Came through first case."
 			help_funct $1
+			exit 0 ;;
+		-v|--version)
+			echo CA Key Manager version $version
 			exit 0 ;;
 		-*)    
 			echo "${0}: ${1}: invalid option" >&2
