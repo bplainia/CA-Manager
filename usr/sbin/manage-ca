@@ -104,9 +104,25 @@ help_funct_help() {
 
 help_funct_list() {
 	echo "${GREEN}The List Command:${NC}"
+	echo    ""
+	echo -e "Syntax: ${BLUE}$0 list [<TYPE>]${NC}"
+	echo	""
+	echo -e "    ${BLUE}TYPE${NC}:"
+	echo -e "        The type of certificate. Valid"
+	echo -e "        options are ${RED}root${NC}, ${RED}intermediate${NC}, ${RED}user${NC}, "
+	echo -e "        or ${RED}server${NC} (or ${RED}site${NC}). All types except root will "
+	echo	"        need the authority argument specifying what certificate."
+	echo -e "        ${BLUE}AUTHORITY${NC} to use."
 }
 help_funct_config() {
 	echo "${GREEN}The Config Command:${NC}"
+	echo    ""
+	echo -e "Syntax: ${BLUE}$0 config [<SECTION>]${NC}"
+	echo	""
+	echo -e "    ${BLUE}SECTION${NC}:"
+	echo    "        The section that you want to configure. Can be a name of a authority,"
+	echo -e "        user, site or ${RED}global${NC}. If no more arguments given, the "
+	ehco    "        command will be interactive."
 }
 
 help_funct_new() {
@@ -228,7 +244,7 @@ cat <<-EOFILE  > $directory/$1/openssl.cnf
 	keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
 	
 	[ usr_cert ]
-	# Extensions for client certificates (`man x509v3_config`).
+	# Extensions for client certificates ('man x509v3_config').
 	basicConstraints = CA:FALSE
 	nsCertType = client, email
 	nsComment = "OpenSSL Generated Client Certificate"
@@ -238,7 +254,7 @@ cat <<-EOFILE  > $directory/$1/openssl.cnf
 	extendedKeyUsage = clientAuth, emailProtection
 	
 	[ server_cert ]
-	# Extensions for server certificates (`man x509v3_config`).
+	# Extensions for server certificates (man x509v3_config).
 	basicConstraints = CA:FALSE
 	nsCertType = server
 	nsComment = "OpenSSL Generated Server Certificate"
@@ -386,12 +402,11 @@ mkrootca() {
 	touch index.txt
 	echo 1000 > serial
 	debug "Generating the config file"
-	generate_config root $1 # uses directory, target, and type variables
+	generate_ssl_config root $1 # uses directory, target, and type variables
 	debug "Generating the private key (4096 bits)"
 	echo Generating CA Private Key
 	echo Enter a CA password when prompted. Remember it!
 	openssl genrsa -aes256 -out private/$1.key.pem 4096
-	mkdir certs crl newcerts private
 	[[ $noperms == 0 ]] && chmod 400 private/$1.key.pem
 	# Now create the public key
 	debug Generating CA Certificate
