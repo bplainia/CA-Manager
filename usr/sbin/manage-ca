@@ -4,17 +4,29 @@
 #
 # References:
 #  https://jamielinux.com/docs/openssl-certificate-authority/index.html
-#  https://github.com/chilladx/config-parser
+#  http://www.goodmami.org/2011/07/04/Simple-logging-in-BASH-scripts.html
 
 ############################################################
 # Setup                                                    #
 ############################################################
+
+# I don't care about case.
 shopt -s nocasematch
+
+# Default variables
 version="0.1"
 configfile="/etc/ca-manager/ca-manager.conf"
+noperms=0
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 interrupt_c() {
 	echo CTRL-C Pressed!!
+	exit 255
 }
 
 interrupt_other() {
@@ -30,6 +42,31 @@ exit_cmd() {
 trap exit_cmd EXIT
 trap interrupt_c SIGINT
 trap interrupt_other SIGHUP SIGTERM
+
+# Logging functionality
+
+exec 3>&2 # logging stream (file descriptor 3) defaults to STDERR
+verbosity=5 # default to show warnings
+silent_lvl=0
+crt_lvl=1
+err_lvl=2
+wrn_lvl=3
+dbg_lvl=4
+inf_lvl=5
+
+notify() { log $silent_lvl "NOTE: $1"; } # Always prints
+critical() { log $crt_lvl "CRITICAL: $1"; }
+error() { log $err_lvl "ERROR: $1"; }
+warn() { log $wrn_lvl "WARNING: $1"; }
+debug() { log $dbg_lvl "DEBUG: $1"; }
+inf() { log $inf_lvl "INFO: $1"; } # "info" is already a command
+log() {
+    if [ $verbosity -ge $1 ]; then
+        datestring=`date +'%Y-%m-%d %H:%M:%S'`
+        # Expand escaped characters, wrap at 70 chars, indent wrapped lines
+        echo -e "$datestring $2" | fold -w100 -s | sed '2~1s/^/  /' >&3
+    fi
+}
 
 ############################################################
 # Help Functions                                           #
@@ -51,21 +88,47 @@ help_funct() {
 	elif [[ $1 == "-h" || $1 == "--help" ]]; then
 		help_funct_help
 	else
-		echo "Command not found. Either help has not been written for that command or it doesn't exist"
+		error "Command not found. Either help has not been written for that command or it doesn't exist"
 	fi
 }
 
 help_funct_help() {
-	echo "Help for when you need help:"
-	echo "Well, there really isn't any help for you if you need to find out how to use the help function"
-	echo "Just put a command name after help to figure out what it does."
+	echo -e "${GREEN}The Help Command:${NC}"
+	echo    ""
+	echo -e "Syntax: ${BLUE}$0 help <COMMAND>${NC}"
+	echo	""
+	echo -e "    ${BLUE}COMMAND${NC}:"
+	echo -e "       Valid options: ${RED}help${NC}, ${RED}list${NC}, ${RED}new${NC}, ${RED}revoke${NC}, ${RED}delete${NC}"
+	echo    ""
 }
 
 help_funct_list() {
-	echo "The List Command:"
+	echo "${GREEN}The List Command:${NC}"
 }
 help_funct_config() {
-	echo "The Config Command:"
+	echo "${GREEN}The Config Command:${NC}"
+}
+
+help_funct_new() {
+	echo    "${GREEN}The New Command:${NC}" # its actually quite old
+	echo    ""
+	echo -e "  Syntax: ${BLUE}$0 new <TYPE> <NAME> [<AUTHORITY>]${NC}"
+	echo	""
+	echo -e "    ${BLUE}TYPE${NC}:"
+	echo -e "        The type of certificate that is desired. Valid"
+	echo -e "        options are ${RED}root${NC}, ${RED}intermediate${NC}, ${RED}user${NC}, "
+	echo -e "        or ${RED}server${NC} (or ${RED}site${NC}). All types except root will "
+	echo	"        need the authority argument specifying what certificate."
+	echo -e "        ${BLUE}AUTHORITY${NC} to use."
+	echo	""
+	echo -e "    ${BLUE}NAME${NC}:"
+	echo -e "        Any name that has not been used before and has completely"
+	echo	"        allowable characters. You will be prompted for a name that "
+	echo	"        has been used before asking if you want to replace it."
+	echo	""
+	echo -e "    ${BLUE}AUTHORITY${NC}:"
+	echo -e "        Not needed for the ${RED}root${NC} type. Specifies the certificate"
+	echo	"        authority"
 }
 
 ############################################################
@@ -79,7 +142,7 @@ if [[ $1 == "root" ]]; then
 else
 	policy="policy_loose"
 fi
-cat <<-EOFILE
+cat <<-EOFILE  > $directory/$1/openssl.cnf
 	[ ca ]
 	default_ca	= CA_default		# The default ca section
 	
@@ -197,66 +260,90 @@ EOFILE
 }
 
 modify_ssl_config() {
-	echo Changing ssl config
+	info "Changing ssl config"
 	if ! [ -e "$1" ]; then
-		echo "ERROR: SSL Config file does not exist"
+		critical "SSL Config file does not exist"
 		exit 1
 	fi
 }
 
 # before we read the switches, we need to read the config file, if it exists.
 read_my_config() {
-	local iniFile="$1";
 	local section="NONE"
-	local sectRegex="^[ \t]*\[[ \t]*([A-Za-z0-1]+)[ \t]*\][ \t]*"
-	local varRegex='^[ \t]*([A-Za-z0-9_]*)=("[^\n"]*"|[A-Za-z0-9_]*|[\d]+\.?[\d]*)(?:[ \t]*#.*)?$'
-	local comRegex="^[ \t]*#.*$"
+	local sectRegex='^\[[[:space:]]*([A-Za-z0-1_]+)[[:space:]]*\]$'
+	local varRegex='^([A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*("[[:print:]]*"|[A-Za-z0-9_~\.\/-]*|[[:digit:]]+\.?[[:digit:]]*)[[:space:]]*#?.*'
+	local comRegex="^#.*$"
 	local lineNo=0
 	local items=0
 	
-	if ! [ -e $iniFile ]; then
-		echo "ERROR: Config file not found! I need it to work."
+	if ! [ -e $configfile ]; then
+		critical "Config file not found! I need it to work."
 		exit 502
 	fi
 	
-	echo Reading Configuration File
+	debug Reading Configuration File
 	# parse the file
-	while IFS='' read -r str
+	while read -r str
 	do
+		inf "$str"
 		((lineNo=lineNo + 1))
-		if [[ $str =~ $sectDelimiter ]]; then
-			$section=${BASH_REMATCH[1]}
+		if [[ $str =~ $sectRegex ]]; then
+			section=${BASH_REMATCH[1]}
+			inf "found section ${BASH_REMATCH[1]}"
 		elif [[ $str =~ $varRegex ]]; then
+			inf "found variable ${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+			if [[ $section == "global" ]]; then
 			case "${BASH_REMATCH[1]}" in
 				directory) 
-					directory=${BASH_REMATCH[2]} 
+					if [ -z $directory ]; then
+						debug "Set directory variable"
+						directory=${BASH_REMATCH[2]} 
+						inf "Directory is equal to $directory"
+					else
+						debug "Directory variable overridden by switch"
+					fi
 					((items=items + 1))
 					;;
 				version)
 					if [[ ${BASH_REMATCH[2]} != $version ]]; then
-						echo "ERROR: Config Version does not match"
+						error "Config Version does not match"
 						exit 503
 					fi
 					((items=items + 1)) ;;
+				loglevel)
+					local regex='^[0-5]{1}$'
+					local loglevel=${BASH_REMATCH[2]}
+					if [[ $loglevel =~ $regex ]]; then
+						verbosity=$loglevel
+						echo "Verbosity of Log set to level $verbosity"
+					else
+						error "Log Level is not a single digit in config file. Must be a number from 0 to 5."
+						exit 504
+					fi ;;
+				ignore_permissions)
+					if [[ ${BASH_REGMATCH[2]} == 1 || ${BASH_REGMATCH[2]} == "1" || ${BASH_REGMATCH[2]} == "true" ]]; then
+						noperms=1
+					fi ;;
 				*) 
-					echo "WARNING: Unknown variable on line $lineNo."
-			esac
+					warn "Unknown variable on line $lineNo."
+			esac; fi
 		elif [[ $str =~ $comRegex ]]; then
+			inf Found comment on line $lineNo
 			continue
 		else
-			echo "ERROR: Error in config file on line $lineNo."
-			exit 504
+			error "Error in config file on line $lineNo."
+			exit 555
 		fi
-	done < $iniFile
+	done < $configfile
 	if [ $items -lt 2 ]; then
-		echo "ERROR: Not enough required elements"
+		error "Not enough required elements. I found $items. I am in section $section."
 		exit 505
 	fi
 }
 
 write_my_config() {
-	echo Reading Configuration File
-	
+	notice "Writing Configuration File"
+	critical "Not implemented"
 }
 
 config_my_config() {
@@ -267,25 +354,47 @@ config_my_config() {
 ############################################################
 # Generate Certificates (New Command)                      #
 ############################################################
-mkca() {
+mkrootca() {
 	# TODO: Alternate directory to store items in. Configure in config file or override with switch.
 	# Make the directories that are needed
 	# TODO: Test to see if the target is already there. If so, error. Ask for user to delete on their own after checking.
-	mkdir $directory/$target
-	cd $directory/$target
+	if [[ $directory == "/" || $directory == "" ]]; then
+		critical "I cannot deal with the directory \"$directory\"."
+		exit 403
+	fi
+	cd $directory
+	debug "Making directories, index file and serial file"
+	if [ -d "$1" ]; then
+		warn "Directory exists. Asking user for input."
+		echo "Do you want to replace the CA folder? (type yes)"
+		read input
+		if [[ $input == "yes" ]]; then # case insenstive still set
+			inf "User chose to delete folder"
+			rm -rf $1
+		else
+			error "CA Directory exists. User canceled."
+			exit 0
+		fi
+	else
+		debug "$directory/$1 does not exist"
+	fi
+	debug "Making directories, index.txt and serial files."
+	mkdir $1
+	cd $1
 	mkdir certs crl newcerts private
-	chmod 700 private
+	[[ $noperms == 0 ]] && chmod 700 private
 	touch index.txt
 	echo 1000 > serial
-	# Generate the config file
-	generate_config # uses directory, target, and type variables
-	# Generate the private key
+	debug "Generating the config file"
+	generate_config root $1 # uses directory, target, and type variables
+	debug "Generating the private key (4096 bits)"
 	echo Generating CA Private Key
 	echo Enter a CA password when prompted. Remember it!
 	openssl genrsa -aes256 -out private/$1.key.pem 4096
-	chmod 400 private/$1.key.pem
+	mkdir certs crl newcerts private
+	[[ $noperms == 0 ]] && chmod 400 private/$1.key.pem
 	# Now create the public key
-	echo Generating CA Certificate
+	debug Generating CA Certificate
 	openssl req -config openssl.cnf -key private/$1.key.pem -new -x509 -days 3650 -sha512 -extensions v3_ca -out certs/$1.cert.pem
 	verify=`openssl x509 -noout -text -in certs/$1.cert.pem`
 	echo Please check the certificate
@@ -296,6 +405,7 @@ mkca() {
 	read check
 	if ! [[ $check == "y" || $check == "Y" || $check == "" ]]
 	then
+		error "Certificate not OK"
 		exit 3
 	fi
 }
@@ -329,12 +439,16 @@ while [ $# -gt 0 ]; do
 		-v|--version)
 			echo CA Key Manager version $version
 			exit 0 ;;
+		-c|--config)
+			shift
+			configfile="$1" ;;
 		-*)    
 			echo "${0}: ${1}: invalid option" >&2
 			help_main >&2
 			exit 2 ;;
 		*)    break ;; 
 	esac
+	shift
 done
 # end of the switches. now for commands
 case "$1" in
@@ -342,27 +456,48 @@ case "$1" in
 		echo "Cannot list certificates or CA's" 
 		;;
 	new|n)
+		read_my_config
 		shift
 		# TODO: New ca, user, or server
-		echo "Cannot make new certificates yet" 
+		case "$1" in
+			root) # New root authority (you only need one)
+				shift
+				if [[ $1 == "" ]]; then 
+					error "I need a name for the CA" 
+					exit 1 
+				fi
+				mkrootca $1
+				;;
+			intermediate) 
+				error "Cannot make new certificates yet" 
+				;;
+			user) 
+				error "Cannot make new certificates yet" 
+				;;
+			server|site) 
+				error "Cannot make new certificates yet" 
+				;;
+			*) 
+				error "No valid certificate type given. Please see \"$0 help new\""
+		esac
 		;;
 	config|c)
-		echo "Cannot configure. I don't know how" 
+		error "Cannot configure. I don't know how" 
 		;;
 	help|h)
 		shift
 		help_funct $1 ;;
 	sign|s)
-		echo "Sign not implemented" ;;
+		error "Sign not implemented" ;;
 	export|e|exp)
-		echo "Export not implemented" ;;
+		error "Export not implemented" ;;
 	import|i|imp)
-		echo "Import certificate not implemented" ;;
+		error "Import certificate not implemented" ;;
 	*)
 		if [[ $1 == "" ]]; then
-			echo "No command given. Try the help command"
+			error "No command given. Try the help command"
 		else
-			echo "Command not found."
+			error "Command not found."
 		fi
 esac
 exit 0
