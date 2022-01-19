@@ -7,3 +7,4 @@ Depends: bash (>= 4.0.0)
 Maintainer: Benjamin Plain <bplain@blackhawkelectronics.com>
 Description: Certificate Authority Manager
  A nice tool for when you want to be your own authority.
+ 
