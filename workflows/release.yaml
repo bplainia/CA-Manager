@@ -1,0 +1,38 @@
+name: build
+
+on:
+  push:
+    tags:
+      0 'v*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: copy files
+        run: |
+          mkdir .debpkg
+          cp -R etc .debpkg
+          cp -R usr .debpkg
+          mkdir .rpmpkg
+          cp -R etc .rpmpkg
+          cp -R usr .rpmpkg
+      - uses: jiro4989/build-deb-action@v2
+        with:
+          package: ca-manager
+          package_root: .debpkg
+          maintainer: bplainia
+          version: ${{ github.ref }}
+          arch: 'amd64'
+          desc: 'A basic bash CA Manager for Linux'
+      - uses: jiro4989/build-rpm-action@v2
+        with:
+          summary: 'A basic bash CA Manager for Linux'
+          package: ca-manager
+          package_root: .debpkg
+          maintainer: bplainia
+          version: ${{ github.ref }}
+          arch: 'x86_64'
+          desc: 'A basic bash CA Manager for Linux'
+          depends: 'bash (>= 4.0.0)'
